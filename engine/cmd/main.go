@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	// log test
+	// log
 	logger, err := zap.NewDevelopment()
 	if err != nil {
 		panic(err)

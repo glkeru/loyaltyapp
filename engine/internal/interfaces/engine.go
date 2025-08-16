@@ -7,6 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
+//go:generate mockgen -destination=./../services/mock_engine_test.go -package=engine . RuleStorage
+
 type RuleEngine interface {
 	Relevant(ctx context.Context, order map[string]interface{}) (points int, err error)
 }

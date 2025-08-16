@@ -21,7 +21,7 @@ type Criteria struct {
 type RewardCriteria struct {
 	Points  int32      `bson:"points" json:"points"`
 	Percent int32      `bson:"percent" json:"percent"`
-	Include []Criteria `bson:"criteria" json:"criteria"`
+	Include []Criteria `bson:"include" json:"include"`
 	Exclude []Criteria `bson:"exclude" json:"exclude"`
 }
 

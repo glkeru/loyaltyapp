@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    container_name: engine
+    ports:
+      - "8060:8060"
+    env_file:
+      - .env
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:7
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:        
+  

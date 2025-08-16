@@ -66,12 +66,13 @@ func (s *RuleEngineService) Calculate(ctx context.Context, order map[string]any)
 			}
 		}()
 	}
+	wg.Wait()
+	close(maxCh)
 	for v := range maxCh {
 		if v > pointsMax {
 			pointsMax = v
 		}
 	}
-	wg.Wait()
 
 	// возвращаем максимальные баллы - сумма обычных правил vs максимальное из правил Maximum
 	if pointsAll > pointsMax {
@@ -86,7 +87,7 @@ func Relevant(ctx context.Context, order map[string]any, rule models.Rule) (poin
 	// Заголовок
 	ok, err := checkRewardCriteria(ctx, rule.Header, order)
 	if err != nil {
-		return 0, fmt.Errorf("incorrect rule: %s", rule.ID.String())
+		return 0, fmt.Errorf("incorrect rule: %s, %v", rule.ID.String(), err)
 	}
 	if !ok {
 		return 0, nil
@@ -99,41 +100,45 @@ func Relevant(ctx context.Context, order map[string]any, rule models.Rule) (poin
 		points = rule.Header.Points
 	}
 	// Позиции
-	g, errorctx := errgroup.WithContext(ctx)
-	for _, i := range order["items"].([]map[string]any) {
-		for _, v := range rule.Items {
-			select {
-			case <-ctx.Done():
-				return 0, nil
-			default:
-				i := i
-				v := v
-				g.Go(func() error {
-					select {
-					case <-errorctx.Done():
-						return nil
-					default:
-						ok, err := checkRewardCriteria(ctx, v, i)
-						if err != nil {
-							return err
-						}
-						if ok {
-							price := i["price"].(float64)
-							if v.Percent != 0 {
-								p := int32(math.Ceil(price * float64(rule.Header.Percent) / 100))
-								atomic.AddInt32(&points, p)
-							} else {
-								atomic.AddInt32(&points, int32(v.Points))
+	items, ok := order["items"].([]any)
+	if ok {
+		g, errorctx := errgroup.WithContext(ctx)
+		for _, item := range items {
+			i := item.(map[string]any)
+			for _, v := range rule.Items {
+				select {
+				case <-ctx.Done():
+					return 0, nil
+				default:
+					i := i
+					v := v
+					g.Go(func() error {
+						select {
+						case <-errorctx.Done():
+							return nil
+						default:
+							ok, err := checkRewardCriteria(ctx, v, i)
+							if err != nil {
+								return err
 							}
+							if ok {
+								price := i["price"].(float64)
+								if v.Percent != 0 {
+									p := int32(math.Ceil(price * float64(v.Percent) / 100))
+									atomic.AddInt32(&points, p)
+								} else {
+									atomic.AddInt32(&points, int32(v.Points))
+								}
+							}
+							return nil
 						}
-						return nil
-					}
-				})
+					})
+				}
 			}
 		}
-	}
-	if err := g.Wait(); err != nil {
-		return 0, fmt.Errorf("incorrect rule: %s, %w", rule.ID.String(), err)
+		if err := g.Wait(); err != nil {
+			return 0, fmt.Errorf("incorrect rule: %s, %w", rule.ID.String(), err)
+		}
 	}
 	return points, nil
 }
@@ -244,7 +249,7 @@ func checkCriteria(criteria models.Criteria, data map[string]any) (bool, error) 
 
 // Проверка условий: string, date, bool, numeric
 func checkCondition(cond any, operator string, field any) (bool, error) {
-	result, err := compareValues(cond, field)
+	result, err := compareValues(field, cond)
 	if err != nil {
 		return false, fmt.Errorf("condition is wrong: %w", err)
 	}
@@ -259,7 +264,7 @@ func checkCondition(cond any, operator string, field any) (bool, error) {
 	case "<":
 		return result == -1, nil
 	case ">=":
-		return result == -1 || result == 0, nil
+		return result == 1 || result == 0, nil
 	case "<=":
 		return result == -1 || result == 0, nil
 	}
@@ -267,44 +272,48 @@ func checkCondition(cond any, operator string, field any) (bool, error) {
 	return false, nil
 }
 
-// Если равны возвращаем 0, если cond больше fiend возвращаем 1, если меньше -1
+// Если равны возвращаем 0, если value1 больше value2 возвращаем 1, если меньше -1
 // Пробуем преобразовывать: в даты, в числа, в булеан, в строки
-func compareValues(cond, field any) (int, error) {
+func compareValues(value1, value2 any) (int, error) {
 	// даты
-	var tOrder time.Time
-	var tCond time.Time
-	tOrder, err := time.Parse("2006-01-02", field.(string)) // если удалось распарсить дату из JSON заказа, значит предполагаем, что cond тоже дата
-	if err == nil {
-		tCond, err = time.Parse("2006-01-02", cond.(string))
-		if err != nil {
-			i, ok := cond.(int64) // пробуем UNIX time, исключаем зависимость от Mongo dateTime
-			if ok {
-				tCond = time.UnixMilli(i)
+	value2DT, value2ok := value2.(string)
+	value1DT, value1ok := value1.(string)
+	if value2ok && value1ok {
+		var tvalue2 time.Time
+		var tvalue1 time.Time
+		tvalue2, err := time.Parse("2006-01-02", value2DT) // если удалось распарсить дату из правила, значит в заказе тоже должна быть дата
+		if err == nil {
+			tvalue1, err = time.Parse("2006-01-02", value1DT)
+			if err != nil {
+				i, ok := value1.(int64) // пробуем UNIX time, исключаем зависимость от Mongo dateTime
+				if ok {
+					tvalue1 = time.UnixMilli(i)
+				}
 			}
-		}
-		switch {
-		case !tOrder.IsZero() && tCond.IsZero():
-			return 0, fmt.Errorf("date parsing error") // если в Order дата, а в правиле нет - ошибка
-		case !tOrder.IsZero() && !tCond.IsZero():
 			switch {
-			case tCond.After(tOrder):
-				return 1, nil
-			case tCond.Before(tOrder):
-				return -1, nil
-			default:
-				return 0, nil
+			case tvalue1.IsZero() || tvalue2.IsZero():
+				return 0, fmt.Errorf("date parsing error")
+			case !tvalue2.IsZero() && !tvalue1.IsZero():
+				switch {
+				case tvalue1.After(tvalue2):
+					return 1, nil
+				case tvalue1.Before(tvalue2):
+					return -1, nil
+				default:
+					return 0, nil
+				}
 			}
 		}
 	}
 
 	// числа
-	numCondt, condtok := toFloat64(cond)
-	numOrder, orderok := toFloat64(field)
-	if condtok && orderok {
+	numvalue1, value1ok := toFloat64(value1)
+	numvalue2, value2ok := toFloat64(value2)
+	if value1ok && value2ok {
 		switch {
-		case numCondt > numOrder:
+		case numvalue1 > numvalue2:
 			return 1, nil
-		case numCondt < numOrder:
+		case numvalue1 < numvalue2:
 			return -1, nil
 		default:
 			return 0, nil
@@ -312,11 +321,11 @@ func compareValues(cond, field any) (int, error) {
 	}
 
 	// bool
-	boolCondt, condtok := cond.(bool)
-	boolOrder, orderok := field.(bool)
-	if condtok && orderok {
+	boolvalue1, value1ok := value1.(bool)
+	boolvalue2, value2ok := value2.(bool)
+	if value1ok && value2ok {
 		switch {
-		case boolCondt == boolOrder:
+		case boolvalue1 == boolvalue2:
 			return 0, nil
 		default:
 			return -1, nil
@@ -324,15 +333,15 @@ func compareValues(cond, field any) (int, error) {
 	}
 
 	// string
-	strCondt, condtok := cond.(string)
-	strOrder, orderok := field.(string)
-	if condtok && orderok {
+	strvalue1, value1ok := value1.(string)
+	strvalue2, value2ok := value2.(string)
+	if value1ok && value2ok {
 		switch {
-		case strCondt > strOrder:
+		case strvalue1 > strvalue2:
 			return 1, nil
-		case strCondt < strOrder:
+		case strvalue1 < strvalue2:
 			return -1, nil
-		case strCondt == strOrder:
+		case strvalue1 == strvalue2:
 			return 0, nil
 		}
 	}

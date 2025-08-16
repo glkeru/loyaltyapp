@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+option go_package = "github.com/glkeru/loyalty/points/internal/api/grpc;grpc";
+
+package points;
+
+// Баланс - запрос
+message BalanceRequest {
+    string user = 1; // ID пользователя
+}
+
+// Баланс - ответ
+message BalanceResponse {
+    double points = 1; // кол-во баллов
+}
+
+// Транзакции - запрос
+message TnxRequest {
+    string user = 1; // ID пользователя
+    string datefrom = 2; // дата с
+    string dateto = 3; // дата по
+}
+
+// Транзакции - ответ
+message TnxResponse {
+    repeated TnxMessage Tnx = 1;
+}
+
+message TnxMessage {
+    string UUID = 1; // UUID транзакции
+    double points = 2;  // кол-во баллов
+    string CommitDate = 3; // дата/время транзакции / дата в будущем, в которую начислить баллы
+    bool Commit = 4; // транзакция обработана
+    int32 TypeTnx = 5;   // тип операции
+    string order = 6; // ID заказа
+    string transfer = 7; // ID операции перевода баллов
+    string redeem = 8; // ID операции списания баллов
+}
+
+// сервис: получение баланса, получение транзакций
+service GetPoints {
+    rpc GetBalance (BalanceRequest) returns (BalanceResponse) {}
+    rpc GetTnx (TnxRequest) returns (TnxResponse) {}
+}
+

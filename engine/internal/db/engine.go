@@ -27,7 +27,7 @@ func NewRulesDB() (*RulesDB, error) {
 		return nil, fmt.Errorf("env ENGINE_MONGO is not set")
 	}
 
-	options := options.Client().ApplyURI("mongodb://" + mng)
+	options := options.Client().ApplyURI(mng)
 	client, err := mongo.Connect(ctx, options)
 	if err != nil {
 		return nil, err
@@ -42,6 +42,7 @@ func NewRulesDB() (*RulesDB, error) {
 	return &RulesDB{client, coll}, nil
 }
 
+// получение активных правил
 func (r RulesDB) GetActiveRules(ctx context.Context) ([]engine.Rule, error) {
 	var rules []engine.Rule
 	filter := bson.M{"active": true}
@@ -61,6 +62,7 @@ func (r RulesDB) GetActiveRules(ctx context.Context) ([]engine.Rule, error) {
 	return rules, nil
 }
 
+// создание/обновление правила
 func (r RulesDB) SaveRule(ctx context.Context, rule engine.Rule) error {
 	// если ID пустой, значит новое правило
 	if rule.ID == uuid.Nil {
@@ -77,12 +79,14 @@ func (r RulesDB) SaveRule(ctx context.Context, rule engine.Rule) error {
 	return nil
 }
 
+// получение правила
 func (r RulesDB) GetRule(ctx context.Context, ruleId uuid.UUID) (rule engine.Rule) {
 	filter := bson.M{"id": ruleId}
 	r.coll.FindOne(ctx, filter).Decode(rule)
 	return rule
 }
 
+// получение всех правил
 func (r RulesDB) GetAllRules(ctx context.Context) ([]engine.Rule, error) {
 	var rules []engine.Rule
 	result, err := r.coll.Find(ctx, bson.M{})

@@ -36,7 +36,7 @@ func main() {
 	}
 	storage = dt
 
-	// api handlers
+	// server
 	r := api.NewHandler(&storage, logger)
 	srv := &http.Server{
 		Handler:      r,
@@ -44,7 +44,11 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 		ReadTimeout:  10 * time.Second,
 	}
-	go srv.ListenAndServe()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			panic(err)
+		}
+	}()
 
 	// shutdown
 	interrupt := make(chan os.Signal, 1)

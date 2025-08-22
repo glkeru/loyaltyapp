@@ -109,7 +109,8 @@
     - [models](points/internal/models/) — модель
     - [services](points/internal/services/) — логика
     - [interfaces](points/internal/interfaces/) — объявления интерфейсов
-    - [db](points/internal/db/) — функции работы с MongoDB и Redis
+    - [db](points/internal/db/) — функции работы с Postgres и Redis
+      - [migrations](points/internal/db/migrations/) — миграции для Postgres
     - [api](points/internal/api/)
       - [grpc](points/internal/api/grpc/) — gRPC
     - [external](points/internal/external/)

@@ -2,17 +2,18 @@ package grpc
 
 import (
 	context "context"
+	"errors"
 	"time"
 
 	db "github.com/glkeru/loyalty/points/internal/db"
 	interf "github.com/glkeru/loyalty/points/internal/interfaces"
+	model "github.com/glkeru/loyalty/points/internal/models"
 	services "github.com/glkeru/loyalty/points/internal/services"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
 
 	"go.uber.org/zap"
 )
-
-//GetBalance(ctx context.Context, in *BalanceResponse, opts ...grpc.CallOption) (*BalanceResponse, error)
-//	GetTnx(ctx context.Context, in *TnxRequest, opts ...grpc.CallOption) (*TnxResponse, error)
 
 type PointsService struct {
 	service *services.PointsService
@@ -40,6 +41,7 @@ func NewPointsService() *PointsService {
 	redis, err = db.NewCacheService()
 	if err != nil {
 		logger.Error(err.Error())
+		redis = nil
 	}
 	serv := services.NewPointService(logger, storage, redis)
 	return &PointsService{serv, UnimplementedGetPointsServer{}}
@@ -49,6 +51,9 @@ func NewPointsService() *PointsService {
 func (p *PointsService) GetBalance(ctx context.Context, in *BalanceRequest) (*BalanceResponse, error) {
 	points, err := p.service.GetBalance(ctx, in.User)
 	if err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
 		p.service.Log(err)
 		return nil, err
 	}
@@ -73,6 +78,9 @@ func (p *PointsService) GetTnx(ctx context.Context, in *TnxRequest) (*TnxRespons
 	// получить транзакции
 	tnxs, err := p.service.GetTnx(ctx, user, from, to)
 	if err != nil {
+		if errors.Is(err, model.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, err.Error())
+		}
 		p.service.Log(err)
 		return nil, err
 	}

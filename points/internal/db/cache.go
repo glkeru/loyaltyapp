@@ -21,19 +21,17 @@ func NewCacheService() (serv *CacheService, err error) {
 	if addr == "" {
 		return nil, fmt.Errorf("env POINTS_CACHE_URL is not set")
 	}
-	user := os.Getenv("POINTS_CACHE_USER")
+	port := os.Getenv("POINTS_CACHE_PORT")
 	if addr == "" {
-		return nil, fmt.Errorf("env POINTS_CACHE_USER is not set")
+		return nil, fmt.Errorf("env POINTS_CACHE_URL is not set")
 	}
-	pwd := os.Getenv("POINTS_CACHE_PWD")
-	if addr == "" {
-		return nil, fmt.Errorf("env POINTS_CACHE_PWD is not set")
-	}
+
+	addr = addr + ":" + port
 	// redis
 	db := redis.NewClient(&redis.Options{
-		Addr:        addr,
-		Password:    pwd,
-		Username:    user,
+		Addr: addr,
+		//		Password:    pwd,
+		//		Username:    user,
 		DB:          0,
 		MaxRetries:  5,
 		DialTimeout: 10 * time.Second,

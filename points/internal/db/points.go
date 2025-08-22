@@ -2,6 +2,7 @@ package points
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	model "github.com/glkeru/loyalty/points/internal/models"
 	"github.com/google/uuid"
+	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -23,10 +25,27 @@ type PointsDB struct {
 
 func NewPointsDB(logger *zap.Logger) (db *PointsDB, err error) {
 	// config
-	dsn := os.Getenv("POINTS_DB")
-	if dsn == "" {
+	purl := os.Getenv("POINTS_DB")
+	if purl == "" {
 		return nil, fmt.Errorf("env POINTS_DB is not set")
 	}
+	port := os.Getenv("POINTS_DB_PORT")
+	if port == "" {
+		return nil, fmt.Errorf("env POINTS_DB_PORT is not set")
+	}
+	user := os.Getenv("POINTS_DB_USER")
+	if user == "" {
+		return nil, fmt.Errorf("env POINTS_DB_USER is not set")
+	}
+	password := os.Getenv("POINTS_DB_PASSWORD")
+	if password == "" {
+		return nil, fmt.Errorf("env POINTS_DB_PASSWORD is not set")
+	}
+	database := os.Getenv("POINTS_DB_BASE")
+	if database == "" {
+		return nil, fmt.Errorf("env POINTS_DB_BASE is not set")
+	}
+	dsn := "postgres://" + user + ":" + password + "@" + purl + ":" + port + "/" + database
 
 	pool, err := pgxpool.New(context.Background(), dsn)
 	return &PointsDB{pool, logger}, err
@@ -43,18 +62,65 @@ func (p *PointsDB) TnxCreate(ctx context.Context, tnx model.PointTransaction) er
 	tnx.UUID = uuid.New()
 
 	sql, args, err := sq.Insert("tnx").
-		Columns("uuid", "pointaccount", "points", "commitdate", "typetnx", "orderid", "transferid", "redeemid").
+		Columns("id", "pointaccount", "points", "commitdate", "typetnx", "orderid", "transferid", "redeemid").
 		Values(tnx.UUID, tnx.PointAccount, tnx.Points, tnx.CommitDate, model.ACCRUEL, tnx.OrderID, tnx.TransferID, tnx.RedeemID).
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
 	if err != nil {
+		p.logger.Error("SQL error",
+			zap.Error(err),
+			zap.String("query", sql),
+			zap.Any("args", args),
+		)
 		return err
 	}
 
-	_, err = conn.Exec(ctx, sql, args)
+	_, err = conn.Exec(ctx, sql, args...)
 	if err != nil {
+		p.logger.Error("SQL error",
+			zap.Error(err),
+			zap.String("query", sql),
+			zap.Any("args", args),
+		)
 		return err
 	}
 	return nil
+}
+
+// Создание пользователя
+func (p *PointsDB) UserCreate(ctx context.Context, userid string) (useruuid uuid.UUID, err error) {
+	conn, err := p.pool.Acquire(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer conn.Release()
+
+	useruuid = uuid.New()
+
+	sql, args, err := sq.Insert("accounts").
+		Columns("uuid", "userid", "balance").
+		PlaceholderFormat(sq.Dollar).
+		Values(useruuid, userid, 0).
+		ToSql()
+	if err != nil {
+		p.logger.Error("SQL error",
+			zap.Error(err),
+			zap.String("query", sql),
+			zap.Any("args", args),
+		)
+		return uuid.Nil, err
+	}
+
+	_, err = conn.Exec(ctx, sql, args...)
+	if err != nil {
+		p.logger.Error("SQL error",
+			zap.Error(err),
+			zap.String("query", sql),
+			zap.Any("args", args),
+		)
+		return uuid.Nil, err
+	}
+	return useruuid, nil
 }
 
 // Удаление транзакции (возвраты)
@@ -67,9 +133,10 @@ func (p *PointsDB) TnxDelete(ctx context.Context, orderId string) error {
 
 	sql, args, err := sq.Delete("tnx").
 		Where(sq.Eq{"orderid": orderId}).
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
 
-	_, err = conn.Exec(ctx, sql, args)
+	_, err = conn.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
@@ -86,14 +153,23 @@ func (p *PointsDB) TnxCommitOnDate(ctx context.Context, date time.Time) error {
 	defer conn.Release()
 
 	// получить все транзакции для коммита - сгруппировать по счетам
-	sql, args, err := sq.Select("tnx").
-		Columns("pointaccount", "SUM(points) as points").
+	sql, args, err := sq.Select("pointaccount", "SUM(points) as points").
+		From("tnx").
 		Where(sq.Eq{"commit": false}).
 		Where(sq.LtOrEq{"commitdate": date}).
 		GroupBy("pointaccount").
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
+	if err != nil {
+		p.logger.Error("SQL error",
+			zap.Error(err),
+			zap.String("query", sql),
+			zap.Any("args", args),
+		)
+		return err
+	}
 
-	rows, err := conn.Query(ctx, sql, args)
+	rows, err := conn.Query(ctx, sql, args...)
 	if err != nil {
 		p.logger.Error("Query get tnx error", zap.Error(err), zap.String("service", "TnxCommitOnDate"))
 		return err
@@ -111,22 +187,27 @@ func (p *PointsDB) TnxCommitOnDate(ctx context.Context, date time.Time) error {
 			semcount = 3
 		}
 	}
+	if semcount == 0 {
+		semcount = 1
+	}
 
 	// семафор
 	semch := make(chan struct{}, semcount)
 	wg := &sync.WaitGroup{}
 
-
 	// обработка счетов
 	for rows.Next() {
-		wg.Add(1)
-		semch <- struct{}{}
 		var balance uuid.UUID
 		var points float64
-		rows.Scan(balance, points)
+		rows.Scan(&balance, &points)
 
+		semch <- struct{}{}
+		wg.Add(1)
 		go func(balance uuid.UUID, points float64) {
-			defer func() { <-semch }()
+			defer func() {
+				wg.Done()
+				<-semch
+			}()
 
 			conn, err := p.pool.Acquire(ctx)
 			if err != nil {
@@ -156,7 +237,7 @@ func (p *PointsDB) TnxCommitOnDate(ctx context.Context, date time.Time) error {
 			// блокируем строку с балансом
 			var currentb float64
 			row := tx.QueryRow(ctx, "SELECT balance from ACCOUNTS where uuid = $1 FOR UPDATE", balance)
-			err = row.Scan(currentb)
+			err = row.Scan(&currentb)
 			if err != nil {
 				p.logger.Error("Block balance error",
 					zap.Error(err),
@@ -172,8 +253,9 @@ func (p *PointsDB) TnxCommitOnDate(ctx context.Context, date time.Time) error {
 			sql, args, err := sq.Update("accounts").
 				Set("balance", currentb).
 				Where(sq.Eq{"uuid": balance}).
+				PlaceholderFormat(sq.Dollar).
 				ToSql()
-			_, err = tx.Exec(ctx, sql, args)
+			_, err = tx.Exec(ctx, sql, args...)
 			if err != nil {
 				p.logger.Error("Update balance error",
 					zap.Error(err),
@@ -187,10 +269,11 @@ func (p *PointsDB) TnxCommitOnDate(ctx context.Context, date time.Time) error {
 			sql, args, err = sq.Update("tnx").
 				Set("commit", true).
 				Where(sq.Eq{"pointaccount": balance}).
-				Where(sq.Eq{"commit": true}).
+				Where(sq.Eq{"commit": false}).
 				Where(sq.LtOrEq{"commitdate": date}).
+				PlaceholderFormat(sq.Dollar).
 				ToSql()
-			_, err = tx.Exec(ctx, sql, args)
+			_, err = tx.Exec(ctx, sql, args...)
 			if err != nil {
 				p.logger.Error("Commit tnx error",
 					zap.Error(err),
@@ -237,14 +320,16 @@ func (p *PointsDB) Redeem(ctx context.Context, user string, points float64, rede
 	// проверить и заблокировать баланс
 	var currentb float64
 	var account uuid.UUID
-	row := tx.QueryRow(ctx, "SELECT uuid, balance from ACCOUNT where user = $1 FOR UPDATE", user)
+	var pguuid pgtype.UUID
+	row := tx.QueryRow(ctx, "SELECT uuid, balance from ACCOUNTS where userid = $1 FOR UPDATE", user)
 	if err != nil {
 		return err
 	}
-	err = row.Scan(currentb, account)
+	err = row.Scan(&pguuid, &currentb)
 	if err != nil {
 		return err
 	}
+	account, _ = uuid.FromBytes(pguuid.Bytes[:])
 	if currentb < points {
 		return fmt.Errorf("Not enough points")
 	}
@@ -252,23 +337,25 @@ func (p *PointsDB) Redeem(ctx context.Context, user string, points float64, rede
 	// обновляем баланс
 	sql, args, err := sq.Update("accounts").
 		Set("balance", currentb).
-		Where(sq.Eq{"user": user}).
+		Where(sq.Eq{"userid": user}).
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
-	_, err = tx.Exec(ctx, sql, args)
+	_, err = tx.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
 
 	// добавить транзакцию списания
 	sql, args, err = sq.Insert("tnx").
-		Columns("uuid", "pointaccount", "points", "commitdate", "typetnx", "redeemid").
-		Values(uuid.New(), account, points, time.Now(), model.REDEEM, redeemId).
+		Columns("id", "pointaccount", "points", "commitdate", "typetnx", "redeemid", "commit").
+		Values(uuid.New(), account, points, time.Now(), model.REDEEM, redeemId, true).
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
 	if err != nil {
 		return err
 	}
 
-	_, err = conn.Exec(ctx, sql, args)
+	_, err = conn.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
@@ -299,14 +386,16 @@ func (p *PointsDB) Transfer(ctx context.Context, userfrom string, userto string,
 	// проверить и заблокировать баланс
 	var currentb float64
 	var account uuid.UUID
-	row := tx.QueryRow(ctx, "SELECT uuid, balance from ACCOUNT where user = $1 FOR UPDATE", userfrom)
+	var pguuid pgtype.UUID
+	row := tx.QueryRow(ctx, "SELECT uuid, balance from ACCOUNTS where userid = $1 FOR UPDATE", userfrom)
 	if err != nil {
 		return err
 	}
-	err = row.Scan(currentb, account)
+	err = row.Scan(&pguuid, &currentb)
 	if err != nil {
 		return err
 	}
+	account, _ = uuid.FromBytes(pguuid.Bytes[:])
 	if currentb < points {
 		return fmt.Errorf("Not enough points")
 	}
@@ -314,53 +403,59 @@ func (p *PointsDB) Transfer(ctx context.Context, userfrom string, userto string,
 	// обновляем баланс
 	sql, args, err := sq.Update("accounts").
 		Set("balance", currentb).
-		Where(sq.Eq{"user": userfrom}).
+		Where(sq.Eq{"userid": userfrom}).
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
-	_, err = tx.Exec(ctx, sql, args)
+	_, err = tx.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
 	// добавить транзакцию списания
 	sql, args, err = sq.Insert("tnx").
-		Columns("uuid", "pointaccount", "points", "commitdate", "typetnx", "transferid").
+		Columns("id", "pointaccount", "points", "commitdate", "typetnx", "transferid").
 		Values(uuid.New(), account, points, time.Now(), model.REDEEM, transferId).
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
 	if err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, sql, args)
+	_, err = conn.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
 
 	// user 2
-	row = tx.QueryRow(ctx, "SELECT uuid, balance from ACCOUNT where user = $1 FOR UPDATE", userto)
+	row = tx.QueryRow(ctx, "SELECT uuid, balance from ACCOUNTS where userid = $1 FOR UPDATE", userto)
 	if err != nil {
 		return err
 	}
-	err = row.Scan(currentb, account)
+
+	err = row.Scan(&pguuid, &currentb)
 	if err != nil {
 		return err
 	}
+	account, _ = uuid.FromBytes(pguuid.Bytes[:])
 	currentb += points
 	// обновляем баланс
 	sql, args, err = sq.Update("accounts").
 		Set("balance", currentb).
-		Where(sq.Eq{"user": userto}).
+		Where(sq.Eq{"userid": userto}).
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
-	_, err = tx.Exec(ctx, sql, args)
+	_, err = tx.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
 	// добавить транзакцию начисленияs
 	sql, args, err = sq.Insert("tnx").
-		Columns("uuid", "pointaccount", "points", "commitdate", "typetnx", "transferid").
+		Columns("id", "pointaccount", "points", "commitdate", "typetnx", "transferid").
 		Values(uuid.New(), account, points, time.Now(), model.ACCRUEL, transferId).
+		PlaceholderFormat(sq.Dollar).
 		ToSql()
 	if err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, sql, args)
+	_, err = conn.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
@@ -377,9 +472,15 @@ func (p *PointsDB) GetBalance(ctx context.Context, user string) (points float64,
 		return 0, err
 	}
 
-	row := conn.QueryRow(ctx, "SELECT balance FROM account WHERE user = $1", user)
-	err = row.Scan(points)
+	row := conn.QueryRow(ctx, "SELECT balance FROM accounts WHERE userid = $1", user)
+	err = row.Scan(&points)
+	p.logger.Info("points",
+		zap.Any("points", points),
+	)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, fmt.Errorf("user %w", model.ErrNotFound)
+		}
 		return 0, err
 	}
 	return points, nil
@@ -392,23 +493,44 @@ func (p *PointsDB) GetTnx(ctx context.Context, user string, from time.Time, to t
 		return nil, err
 	}
 
-	sql, args, err := sq.Select("tnx").
-		Columns("uuid", "pointaccount", "points", "commitdate", "typetnx", "orderid", "transferid", "redeemid").
-		Where(sq.Eq{"user": user}).
-		Where(sq.Eq{"commit": true}).
-		Where(sq.GtOrEq{"commitdate": from}).
-		Where(sq.LtOrEq{"commitdate": to}).
-		ToSql()
-	rows, err := conn.Query(ctx, sql, args)
+	var account uuid.UUID
+	var pguuid pgtype.UUID
+	row := conn.QueryRow(ctx, "SELECT uuid from ACCOUNTS where userid = $1 FOR UPDATE", user)
 	if err != nil {
 		return nil, err
 	}
+	err = row.Scan(&pguuid)
+	if err != nil {
+		return nil, err
+	}
+	account, _ = uuid.FromBytes(pguuid.Bytes[:])
+	sql, args, err := sq.Select("id", "pointaccount", "points", "commitdate", "typetnx", "orderid", "transferid", "redeemid").
+		From("tnx").
+		Where(sq.Eq{"pointaccount": account}).
+		Where(sq.Eq{"commit": true}).
+		Where(sq.GtOrEq{"commitdate": from}).
+		Where(sq.LtOrEq{"commitdate": to}).
+		PlaceholderFormat(sq.Dollar).
+		ToSql()
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("transactions %w", model.ErrNotFound)
+		}
+		return nil, err
+	}
 	var tnx model.PointTransaction
+	var OrderID pgtype.Text
+	var TransferID pgtype.Text
+	var RedeemID pgtype.Text
 	for rows.Next() {
-		err = rows.Scan(&tnx.UUID, &tnx.PointAccount, &tnx.Points, &tnx.CommitDate, &tnx.TypeTnx, &tnx.OrderID, &tnx.TransferID, &tnx.RedeemID)
+		err = rows.Scan(&tnx.UUID, &tnx.PointAccount, &tnx.Points, &tnx.CommitDate, &tnx.TypeTnx, &OrderID, &TransferID, &RedeemID)
 		if err != nil {
 			return nil, err
 		}
+		tnx.OrderID = OrderID.String
+		tnx.TransferID = TransferID.String
+		tnx.RedeemID = RedeemID.String
 		tnxs = append(tnxs, tnx)
 	}
 	return tnxs, nil
@@ -421,10 +543,17 @@ func (p *PointsDB) GetUserUUID(ctx context.Context, user string) (account uuid.U
 		return uuid.Nil, err
 	}
 
-	row := conn.QueryRow(ctx, "SELECT uuid FROM account WHERE user = $1", user)
-	err = row.Scan(account)
+	row := conn.QueryRow(ctx, "SELECT uuid FROM accounts WHERE userid = $1", user)
+	var pguuid pgtype.UUID
+
+	err = row.Scan(&pguuid)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			account, err = p.UserCreate(ctx, user)
+			return account, err
+		}
 		return uuid.Nil, err
 	}
+	account, _ = uuid.FromBytes(pguuid.Bytes[:])
 	return account, nil
 }

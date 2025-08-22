@@ -69,6 +69,9 @@ func main() {
 			semcount = 5
 		}
 	}
+	if semcount == 0 {
+		semcount = 1
+	}
 
 	// os signals
 	go func() {

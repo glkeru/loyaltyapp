@@ -1,6 +1,7 @@
 package points
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,7 +11,7 @@ import (
 type PointAccount struct {
 	UUID    uuid.UUID
 	Balance float64 // баланс
-	User    string  // ID пользователя
+	UserId  string  // ID пользователя
 }
 
 const (
@@ -30,3 +31,7 @@ type PointTransaction struct {
 	TransferID   string    // ID операции перевода баллов
 	RedeemID     string    // ID операции списания баллов
 }
+
+var (
+	ErrNotFound = errors.New("not found")
+)

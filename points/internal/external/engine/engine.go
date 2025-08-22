@@ -30,7 +30,7 @@ func CalculateOrder(ctx context.Context, orderJson string) (points int32, err er
 	// вызов расчета баллов
 	client := &http.Client{Timeout: 5 * time.Second}
 	orderData := []byte(orderJson)
-	req, err := http.NewRequest("POST", host+":"+port, bytes.NewBuffer(orderData))
+	req, err := http.NewRequest("POST", host+":"+port+"/calculate", bytes.NewBuffer(orderData))
 	if err != nil {
 		return 0, err
 	}

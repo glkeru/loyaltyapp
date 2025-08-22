@@ -21,11 +21,25 @@ const queueout = "confirms"
 
 func NewRabbitConsumer() (rabbit *RabbitConsumer, err error) {
 	// config
-	rabbiturl := os.Getenv("LOYALTY_RABBIT_URL")
+	rabbiturl := os.Getenv("RABBIT_URL")
 	if rabbiturl == "" {
-		return nil, fmt.Errorf("env LOYALTY_RABBIT_URL is not set")
+		return nil, fmt.Errorf("env RABBIT_URL is not set")
 	}
-	conn, err := amqp.Dial(rabbiturl)
+	rabbitport := os.Getenv("RABBIT_PORT")
+	if rabbiturl == "" {
+		return nil, fmt.Errorf("env RABBIT_PORT is not set")
+	}
+	rabbituser := os.Getenv("RABBIT_USER")
+	if rabbiturl == "" {
+		return nil, fmt.Errorf("env RABBIT_USER is not set")
+	}
+	rabbitpass := os.Getenv("RABBIT_PASSWORD")
+	if rabbiturl == "" {
+		return nil, fmt.Errorf("env RABBIT_PASSWORD is not set")
+	}
+
+	rabbitconn := "amqp://" + rabbituser + ":" + rabbitpass + "@" + rabbiturl + ":" + rabbitport + "/points"
+	conn, err := amqp.Dial(rabbitconn)
 	if err != nil {
 		return nil, err
 	}
@@ -92,8 +106,8 @@ func (r *RabbitConsumer) Close() {
 }
 
 type RedeemConfirm struct {
-	redeemId string
-	success  bool
+	RedeemId string
+	Success  bool
 }
 
 // подтверждение списания

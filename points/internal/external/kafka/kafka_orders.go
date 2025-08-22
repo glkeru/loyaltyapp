@@ -18,8 +18,13 @@ func GetNewReader(topic string) (reader *KafkaOrder, err error) {
 	if kafkaurl == "" {
 		return nil, fmt.Errorf("env KAFKA_ORDER_URL is not set")
 	}
+	kafkaport := os.Getenv("KAFKA_ORDER_PORT")
+	if kafkaurl == "" {
+		return nil, fmt.Errorf("env KAFKA_ORDER_PORT is not set")
+	}
+
 	kafkaconfig := kafka.ReaderConfig{
-		Brokers: []string{kafkaurl},
+		Brokers: []string{kafkaurl + ":" + kafkaport},
 		Topic:   topic,
 		GroupID: "orders_loyalty",
 	}

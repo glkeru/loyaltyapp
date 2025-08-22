@@ -51,6 +51,9 @@ func (p *PointsService) ReturnProcess(ctx context.Context, order string) error {
 	if err != nil {
 		return err
 	}
+
+	p.logger.Info("return",
+		zap.String("id", order))
 	// удалить транзакцию начисления
 	err = p.TnxDelete(ctx, orderId)
 	if err != nil {
@@ -60,8 +63,8 @@ func (p *PointsService) ReturnProcess(ctx context.Context, order string) error {
 }
 
 type OrderStruct struct {
-	orderId string
-	userId  string
+	OrderId string `json:"orderId"`
+	UserId  string `json:"userId"`
 }
 
 func GetUserAndOrder(orderJson string) (userId string, orderId string, err error) {
@@ -71,14 +74,14 @@ func GetUserAndOrder(orderJson string) (userId string, orderId string, err error
 		return
 	}
 
-	userId = orderParams.orderId
+	userId = orderParams.UserId
 	if userId == "" {
 		return "", "", fmt.Errorf("Invalid order: userId field is required")
 	}
 
-	orderId = orderParams.orderId
+	orderId = orderParams.OrderId
 	if orderId == "" {
-		return "", "", fmt.Errorf("Invalid order: userId field is required")
+		return "", "", fmt.Errorf("Invalid order: orderId field is required")
 	}
 	return
 }
@@ -87,6 +90,7 @@ func GetUserAndOrder(orderJson string) (userId string, orderId string, err error
 // TODO: вернуть пользователей, чтобы инвлидировать кэш балансов
 func (p *PointsService) CommitOnDate(ctx context.Context) error {
 	date := time.Now()
+	//TODO: инвалидировать кэш балансов, которые поменялись
 	err := p.db.TnxCommitOnDate(ctx, date)
 	if err != nil {
 		return err
@@ -104,11 +108,11 @@ func (p *PointsService) TnxOrderAccruelCreate(ctx context.Context, userId string
 	var err error
 	daysenv := os.Getenv("POINTS_DAYS_COUNT")
 	if daysenv == "" {
-		dayscount = 14
+		dayscount = 0
 	} else {
 		dayscount, err = strconv.Atoi(daysenv)
 		if err != nil {
-			dayscount = 14
+			dayscount = 0
 		}
 	}
 	tnx.CommitDate = time.Now().Add(time.Duration(dayscount) * 24 * time.Hour)
@@ -137,9 +141,9 @@ func (p *PointsService) TnxDelete(ctx context.Context, orderId string) error {
 
 // создание транзакции списания
 type RedeemStruct struct {
-	userId   string
-	points   float64
-	redeemId string
+	UserId   string  `json:"userId"`
+	Points   float64 `json:"points"`
+	RedeemId string  `json:"redeemId"`
 }
 
 // cписание
@@ -149,11 +153,11 @@ func (p *PointsService) Redeem(ctx context.Context, redeemJson string) (redeemId
 	if err != nil {
 		return "", err
 	}
-	err = p.TnxRedeemCreate(ctx, redeem.userId, redeem.points, redeem.redeemId)
+	err = p.TnxRedeemCreate(ctx, redeem.UserId, redeem.Points, redeem.RedeemId)
 	if err != nil {
-		return redeem.redeemId, err
+		return redeem.RedeemId, err
 	}
-	return redeem.redeemId, nil
+	return redeem.RedeemId, nil
 }
 
 // создание транзакции списания

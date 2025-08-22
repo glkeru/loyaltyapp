@@ -64,6 +64,9 @@ func main() {
 			semcount = 5
 		}
 	}
+	if semcount == 0 {
+		semcount = 1
+	}
 
 	interrrupt := make(chan os.Signal, 1)
 	signal.Notify(interrrupt, os.Interrupt, syscall.SIGTERM)
@@ -80,25 +83,24 @@ loop:
 		case <-ctx.Done():
 			break loop
 		default:
+			order, err := reader.GetNewMessage(ctx)
+			if err != nil {
+				logger.Error(err.Error())
+				return
+			}
 
+			semaphore <- struct{}{}
 			wg.Add(1)
-			go func() {
+			go func(order string) {
 				defer wg.Done()
-
-				semaphore <- struct{}{}
 				defer func() { <-semaphore }()
 
-				order, err := reader.GetNewMessage(ctx)
-				if err != nil {
-					logger.Error(err.Error())
-					return
-				}
 				err = serv.ReturnProcess(ctx, order)
 				if err != nil {
 					logger.Error(err.Error())
 					return
 				}
-			}()
+			}(order)
 		}
 	}
 

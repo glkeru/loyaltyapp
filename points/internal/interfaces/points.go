@@ -10,6 +10,7 @@ import (
 
 type PointsStorage interface {
 	TnxCreate(ctx context.Context, tnx model.PointTransaction) error
+	UserCreate(ctx context.Context, userid string) (useruuid uuid.UUID, err error)
 	TnxDelete(ctx context.Context, orderId string) error
 	TnxCommitOnDate(ctx context.Context, date time.Time) error
 	Redeem(ctx context.Context, user string, points float64, redeemId string) (err error)

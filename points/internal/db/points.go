@@ -496,9 +496,6 @@ func (p *PointsDB) GetTnx(ctx context.Context, user string, from time.Time, to t
 	var account uuid.UUID
 	var pguuid pgtype.UUID
 	row := conn.QueryRow(ctx, "SELECT uuid from ACCOUNTS where userid = $1 FOR UPDATE", user)
-	if err != nil {
-		return nil, err
-	}
 	err = row.Scan(&pguuid)
 	if err != nil {
 		return nil, err

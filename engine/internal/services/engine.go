@@ -46,7 +46,7 @@ func (s *RuleEngineService) Calculate(ctx context.Context, order map[string]any)
 	maxCh := make(chan int32, count) // канал для правил с типом Maximum
 
 	for _, rule := range s.Rules {
-		go func() {
+		go func(rule models.Rule) {
 			defer wg.Done()
 			select {
 			case <-ctx.Done():
@@ -64,7 +64,7 @@ func (s *RuleEngineService) Calculate(ctx context.Context, order map[string]any)
 					atomic.AddInt32(&pointsAll, p)
 				}
 			}
-		}()
+		}(rule)
 	}
 	wg.Wait()
 	close(maxCh)
@@ -151,6 +151,13 @@ func checkRewardCriteria(ctx context.Context, reward models.RewardCriteria, data
 	var exclude, include bool
 	// канал отмены: если сработало исключающее условие, нет необходимости завершать проверку включающих условий
 	cancelCh := make(chan struct{})
+	var cancelOnce sync.Once
+	cancel := func() {
+		cancelOnce.Do(func() {
+			close(cancelCh)
+		})
+	}
+
 	g, errorctx := errgroup.WithContext(ctx)
 
 	// Исключающие условия
@@ -162,12 +169,12 @@ func checkRewardCriteria(ctx context.Context, reward models.RewardCriteria, data
 			default:
 				ok, err := checkCriteria(v, data)
 				if err != nil {
-					close(cancelCh)
+					cancel()
 					return err
 				}
 				if ok {
 					exclude = true // если хоть одно условие сработало, значит исключаем
-					close(cancelCh)
+					cancel()
 					return nil
 				}
 			}
@@ -187,7 +194,7 @@ func checkRewardCriteria(ctx context.Context, reward models.RewardCriteria, data
 			default:
 				ok, err := checkCriteria(v, data)
 				if err != nil {
-					close(cancelCh)
+					cancel()
 					return err
 				}
 				if !ok {

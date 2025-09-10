@@ -82,7 +82,7 @@ func (r RulesDB) SaveRule(ctx context.Context, rule engine.Rule) error {
 // получение правила
 func (r RulesDB) GetRule(ctx context.Context, ruleId uuid.UUID) (rule engine.Rule) {
 	filter := bson.M{"id": ruleId}
-	r.coll.FindOne(ctx, filter).Decode(rule)
+	r.coll.FindOne(ctx, filter).Decode(&rule)
 	return rule
 }
 

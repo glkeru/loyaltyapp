@@ -23,9 +23,9 @@ type CalculateResponse struct {
 	Points int32 `json:"points"`
 }
 
-func NewHandler(db *engine.RuleStorage, logger *zap.Logger) *RulesHandler {
+func NewHandler(db engine.RuleStorage, logger *zap.Logger) *RulesHandler {
 	router := mux.NewRouter()
-	handler := &RulesHandler{router, *db, logger}
+	handler := &RulesHandler{router, db, logger}
 	router.HandleFunc("/calculate", handler.CalculateHandler).Methods(http.MethodPost)
 	router.HandleFunc("/rules", handler.GetActiveRulesHandler).Methods(http.MethodGet)
 	router.HandleFunc("/rule/{id}", handler.GetRuleHandler).Methods(http.MethodGet)

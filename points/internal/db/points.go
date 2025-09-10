@@ -135,6 +135,10 @@ func (p *PointsDB) TnxDelete(ctx context.Context, orderId string) error {
 		Where(sq.Eq{"orderid": orderId}).
 		PlaceholderFormat(sq.Dollar).
 		ToSql()
+	if err != nil {
+		p.logger.Error("SQL error", zap.Error(err), zap.String("service", "TnxDelete"))
+		return err
+	}
 
 	_, err = conn.Exec(ctx, sql, args...)
 	if err != nil {
@@ -355,7 +359,7 @@ func (p *PointsDB) Redeem(ctx context.Context, user string, points float64, rede
 		return err
 	}
 
-	_, err = conn.Exec(ctx, sql, args...)
+	_, err = tx.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
@@ -419,7 +423,7 @@ func (p *PointsDB) Transfer(ctx context.Context, userfrom string, userto string,
 	if err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, sql, args...)
+	_, err = tx.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
@@ -455,7 +459,7 @@ func (p *PointsDB) Transfer(ctx context.Context, userfrom string, userto string,
 	if err != nil {
 		return err
 	}
-	_, err = conn.Exec(ctx, sql, args...)
+	_, err = tx.Exec(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
@@ -471,6 +475,7 @@ func (p *PointsDB) GetBalance(ctx context.Context, user string) (points float64,
 	if err != nil {
 		return 0, err
 	}
+	defer conn.Release()
 
 	row := conn.QueryRow(ctx, "SELECT balance FROM accounts WHERE userid = $1", user)
 	err = row.Scan(&points)
@@ -492,10 +497,11 @@ func (p *PointsDB) GetTnx(ctx context.Context, user string, from time.Time, to t
 	if err != nil {
 		return nil, err
 	}
+	defer conn.Release()
 
 	var account uuid.UUID
 	var pguuid pgtype.UUID
-	row := conn.QueryRow(ctx, "SELECT uuid from ACCOUNTS where userid = $1 FOR UPDATE", user)
+	row := conn.QueryRow(ctx, "SELECT uuid from ACCOUNTS where userid = $1", user)
 	err = row.Scan(&pguuid)
 	if err != nil {
 		return nil, err

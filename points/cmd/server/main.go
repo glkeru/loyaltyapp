@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	serv "github.com/glkeru/loyalty/points/internal/api/grpc"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -19,6 +20,12 @@ func main() {
 	if port == "" {
 		panic("env POINTS_GRPC_PORT is not set")
 	}
+	// log
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		panic(err)
+	}
+	defer logger.Sync()
 
 	lis, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
@@ -29,7 +36,7 @@ func main() {
 	signal.Notify(interrrupt, os.Interrupt, syscall.SIGTERM)
 
 	grpcServer := grpc.NewServer()
-	serv.RegisterGetPointsServer(grpcServer, serv.NewPointsService())
+	serv.RegisterGetPointsServer(grpcServer, serv.NewPointsService(logger))
 
 	go func() {
 		err := grpcServer.Serve(lis)

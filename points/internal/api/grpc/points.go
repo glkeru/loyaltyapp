@@ -18,16 +18,10 @@ import (
 type PointsService struct {
 	service *services.PointsService
 	UnimplementedGetPointsServer
+	logger *zap.Logger
 }
 
-func NewPointsService() *PointsService {
-	// log
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		panic(err)
-	}
-	defer logger.Sync()
-
+func NewPointsService(logger *zap.Logger) *PointsService {
 	// database
 	var storage interf.PointsStorage
 	dt, err := db.NewPointsDB(logger)
@@ -44,7 +38,7 @@ func NewPointsService() *PointsService {
 		redis = nil
 	}
 	serv := services.NewPointService(logger, storage, redis)
-	return &PointsService{serv, UnimplementedGetPointsServer{}}
+	return &PointsService{serv, UnimplementedGetPointsServer{}, logger}
 }
 
 // Баланс

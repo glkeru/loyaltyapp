@@ -17,5 +17,40 @@ services:
     volumes:
       - mongo-data:/data/db
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=5d
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+  
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    depends_on: 
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"  # web-ui
+      - "4317:4317"    
+      - "4318:4318"   
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    
+  
 volumes:
-  mongo-data:        
+  mongo-data:   
+
+

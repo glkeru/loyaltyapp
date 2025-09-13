@@ -10,6 +10,8 @@ import (
 	service "github.com/glkeru/loyalty/engine/internal/services"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 )
 
@@ -24,13 +26,19 @@ type CalculateResponse struct {
 }
 
 func NewHandler(db engine.RuleStorage, logger *zap.Logger) *RulesHandler {
+
 	router := mux.NewRouter()
 	handler := &RulesHandler{router, db, logger}
-	router.HandleFunc("/calculate", handler.CalculateHandler).Methods(http.MethodPost)
-	router.HandleFunc("/rules", handler.GetActiveRulesHandler).Methods(http.MethodGet)
-	router.HandleFunc("/rule/{id}", handler.GetRuleHandler).Methods(http.MethodGet)
-	router.HandleFunc("/all", handler.GetAllRulesHandler).Methods(http.MethodGet)
-	router.HandleFunc("/rule", handler.SaveRuleHandler).Methods(http.MethodPost)
+
+	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
+
+	router.Handle("/calculate", otelhttp.NewHandler(http.HandlerFunc(handler.CalculateHandler), "calculate")).Methods(http.MethodPost)
+	router.Handle("/rules", otelhttp.NewHandler(http.HandlerFunc(handler.GetActiveRulesHandler), "rules")).Methods(http.MethodGet)
+	router.Handle("/rule/{id}", otelhttp.NewHandler(http.HandlerFunc(handler.GetRuleHandler), "ruleGet")).Methods(http.MethodGet)
+	router.Handle("/all", otelhttp.NewHandler(http.HandlerFunc(handler.GetAllRulesHandler), "all")).Methods(http.MethodGet)
+	router.Handle("/rule", otelhttp.NewHandler(http.HandlerFunc(handler.SaveRuleHandler), "ruleUpsert")).Methods(http.MethodPost)
+
+	router.Use(MiddlewareLog())
 
 	return handler
 }

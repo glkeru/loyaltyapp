@@ -11,6 +11,7 @@ import (
 	api "github.com/glkeru/loyalty/engine/internal/api"
 	db "github.com/glkeru/loyalty/engine/internal/db"
 	engine "github.com/glkeru/loyalty/engine/internal/interfaces"
+	trace "github.com/glkeru/loyalty/engine/observability/otel"
 	"go.uber.org/zap"
 )
 
@@ -36,8 +37,11 @@ func main() {
 	}
 	storage = dt
 
+	traceShutdown := trace.InitTracer(context.Background())
+	defer traceShutdown()
+
 	// server
-	r := api.NewHandler(&storage, logger)
+	r := api.NewHandler(storage, logger)
 	srv := &http.Server{
 		Handler:      r,
 		Addr:         ":" + port,
